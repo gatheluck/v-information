@@ -166,18 +166,60 @@ def extract_target_layer_features(
 
 
 if __name__ == "__main__":
+    import pathlib
+    from collections import defaultdict
+
     import timm
-    from torch.utils.data import TensorDataset
+    import torchvision.datasets as datasets
+    from timm.data import resolve_data_config
+    from timm.data.transforms_factory import create_transform
+
+    # import torchvision.utils as vutils
+    # from torch.utils.data import TensorDataset
+    from torch.utils.data import DataLoader, Subset
 
     model = timm.create_model("resnet50", pretrained=True)
 
     # create a dummy dataset and dataloader for testing.
-    dummy_images = torch.randn(20, 3, 224, 224)
-    dummy_labels = torch.zeros(20)
-    dataset = TensorDataset(dummy_images, dummy_labels)
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=False)
+    # dummy_images = torch.randn(20, 3, 224, 224)
+    # dummy_labels = torch.zeros(20)
+    # dataset = TensorDataset(dummy_images, dummy_labels)
+    # dataloader = DataLoader(dataset, batch_size=4, shuffle=False)
+
+    # create a dataset for the ImageNet validation set.
+    config = resolve_data_config({}, model=model)
+    val_transform = create_transform(**config)
+    val_dataset = datasets.ImageFolder(
+        root=pathlib.Path("data/imagenet/val"), transform=val_transform
+    )
+
+    # get indices information for each class.
+    class_to_indices = defaultdict(list)
+    for idx, (_, label) in enumerate(
+        zip(val_dataset.imgs, val_dataset.targets, strict=True)
+    ):
+        class_to_indices[label].append(idx)
+
+    # select 20 samples from each class and create a subset dataset.
+    selected_indices = []
+    for _, indices in class_to_indices.items():
+        selected_indices.extend(indices[:2])
+
+    subset_val_dataset = Subset(val_dataset, selected_indices)
+
+    # create a dataloader for the subset dataset.
+    val_loader = DataLoader(
+        subset_val_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True
+    )
+
+    # save the first 3 batches of images for debugging.
+    # for i, (images, labels) in enumerate(val_loader):
+    #     print(images.shape, labels.shape)
+    #     vutils.save_image(images, f"output_{i}.png", nrow=10, normalize=True)
+    #     if i >= 2:
+    #         break
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    features_dict = extract_target_layer_features(model, dataloader, device)
+    features_dict = extract_target_layer_features(model, val_loader, device)
     for k, v in features_dict.items():
         print(f"{k}: shape {v.shape}")
