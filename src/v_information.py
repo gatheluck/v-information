@@ -7,6 +7,7 @@ import torch.nn as nn
 from sklearn.linear_model import LinearRegression
 from torch.utils.data import DataLoader
 from torchvision.models.feature_extraction import create_feature_extractor
+from tqdm import tqdm
 
 
 def compute_v_information(feature: np.ndarray, z: np.ndarray) -> float:
@@ -69,7 +70,7 @@ def compute_complexity_K(  # noqa: N802
     return 1.0 - float(np.mean(v_informations))
 
 
-def _extract_leaf_module_keys(
+def extract_leaf_module_keys(
     module: nn.Module,
     prefix: str = "",
     target_key_patterns: Iterable[str] = [".*conv\\d$"],
@@ -103,7 +104,7 @@ def _extract_leaf_module_keys(
         else:
             # recursively extend the list with keys from the child module.
             leaf_keys.extend(
-                _extract_leaf_module_keys(child, child_key, target_key_patterns)
+                extract_leaf_module_keys(child, child_key, target_key_patterns)
             )
     return leaf_keys
 
@@ -112,6 +113,7 @@ def extract_target_layer_features(
     model: nn.Module,
     dataloader: DataLoader,
     device: torch.device,
+    target_layer_keys: list[str],
     use_global_average_pooling: bool = True,
 ) -> dict[str, np.ndarray]:
     """Extract features from specified target layers for the entire dataset using GPU batched inference.
@@ -126,6 +128,7 @@ def extract_target_layer_features(
         model (nn.Module): The PyTorch model from which features will be extracted.
         dataloader (DataLoader): A DataLoader providing the dataset (e.g., the ImageNet dataset).
         device (torch.device): The device to run inference on.
+        target_layer_keys (list[str]): A list of target layer names (keys) to extract features from.
         use_global_average_pooling (bool, optional): Whether to apply global average pooling
             to the output tensors. Defaults to True.
 
@@ -133,13 +136,11 @@ def extract_target_layer_features(
         dict[str, np.ndarray]: A dictionary where each key is a target layer name (str) and each
             value is a NumPy array of shape (N, D) containing the flattened features extracted from
             that layer across the entire dataset.
+
     """
     # Move the model to the target device and set it to evaluation mode.
     model.to(device)
     model.eval()
-
-    # Extract target leaf module keys from the model.
-    target_layer_keys = _extract_leaf_module_keys(model)
 
     # Create a feature extractor that returns outputs from the target layers.
     feature_extractor = create_feature_extractor(model, return_nodes=target_layer_keys)
@@ -151,19 +152,24 @@ def extract_target_layer_features(
 
     # Process the dataset in batches with no gradient computation.
     with torch.no_grad():
-        for images, _ in dataloader:
+        for i, (images, _) in enumerate(
+            tqdm(dataloader, desc="[extracting layer features]")
+        ):
+            if i >= 50:
+                break
+
             images = images.to(device)
             # Obtain outputs as an OrderedDict from the feature extractor.
             batch_features = feature_extractor(images)
-            for key, tensor in batch_features.items():
+            for key, feature in batch_features.items():
                 # Apply global average pooling to the output tensor.
                 if use_global_average_pooling:
-                    reshaped_tensor = torch.mean(tensor, dim=(-1, -2))
+                    reshaped_feature = torch.mean(feature, dim=(-1, -2))
                 # Flatten the output tensor to 2D (batch_size, -1) and convert to a NumPy array.
                 else:
-                    reshaped_tensor = tensor.view(tensor.size(0), -1)
+                    reshaped_feature = feature.view(feature.size(0), -1)
 
-                features_by_layer[key].append(reshaped_tensor.cpu().numpy())
+                features_by_layer[key].append(reshaped_feature.cpu().numpy())
 
     # Concatenate batch outputs for each target layer along the batch dimension.
     concatenated_features: dict[str, np.ndarray] = {
@@ -245,7 +251,7 @@ if __name__ == "__main__":
     #     if i >= 2:
     #         break
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    features_dict = extract_target_layer_features(model, val_loader, device)
-    for k, v in features_dict.items():
-        print(f"{k}: shape {v.shape}")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # features_dict = extract_target_layer_features(model, val_loader, device)
+    # for k, v in features_dict.items():
+    #     print(f"{k}: shape {v.shape}")
