@@ -112,6 +112,7 @@ def extract_target_layer_features(
     model: nn.Module,
     dataloader: DataLoader,
     device: torch.device,
+    use_global_average_pooling: bool = True,
 ) -> dict[str, np.ndarray]:
     """Extract features from specified target layers for the entire dataset using GPU batched inference.
 
@@ -125,6 +126,8 @@ def extract_target_layer_features(
         model (nn.Module): The PyTorch model from which features will be extracted.
         dataloader (DataLoader): A DataLoader providing the dataset (e.g., the ImageNet dataset).
         device (torch.device): The device to run inference on.
+        use_global_average_pooling (bool, optional): Whether to apply global average pooling
+            to the output tensors. Defaults to True.
 
     Returns:
         dict[str, np.ndarray]: A dictionary where each key is a target layer name (str) and each
@@ -153,9 +156,14 @@ def extract_target_layer_features(
             # Obtain outputs as an OrderedDict from the feature extractor.
             batch_features = feature_extractor(images)
             for key, tensor in batch_features.items():
+                # Apply global average pooling to the output tensor.
+                if use_global_average_pooling:
+                    reshaped_tensor = torch.mean(tensor, dim=(-1, -2))
                 # Flatten the output tensor to 2D (batch_size, -1) and convert to a NumPy array.
-                flattened = tensor.view(tensor.size(0), -1)
-                features_by_layer[key].append(flattened.cpu().numpy())
+                else:
+                    reshaped_tensor = tensor.view(tensor.size(0), -1)
+
+                features_by_layer[key].append(reshaped_tensor.cpu().numpy())
 
     # Concatenate batch outputs for each target layer along the batch dimension.
     concatenated_features: dict[str, np.ndarray] = {
@@ -180,6 +188,24 @@ if __name__ == "__main__":
 
     model = timm.create_model("resnet50", pretrained=True)
 
+    # if you want to extract specific target layers, you can write like following.
+    # this specifies 1,5,10,15,20,25,30,35,40,45,49-th layers of the ResNet50 model.
+    # target_key_patterns = [
+    #     "^conv1$",
+    #     "^layer1.1.conv1$",
+    #     "^layer1.2.conv3$",
+    #     "^layer2.1.conv2$",
+    #     "^layer2.3.conv1$",
+    #     "^layer3.0.conv3$",
+    #     "^layer3.2.conv2$",
+    #     "^layer3.4.conv1$",
+    #     "^layer3.5.conv3$",
+    #     "^layer4.1.conv2$",
+    #     "^layer4.2.conv3$",
+    # ]
+
+    # print(_extract_leaf_module_keys(model, target_key_patterns=target_key_patterns))
+
     # create a dummy dataset and dataloader for testing.
     # dummy_images = torch.randn(20, 3, 224, 224)
     # dummy_labels = torch.zeros(20)
@@ -203,7 +229,7 @@ if __name__ == "__main__":
     # select 20 samples from each class and create a subset dataset.
     selected_indices = []
     for _, indices in class_to_indices.items():
-        selected_indices.extend(indices[:2])
+        selected_indices.extend(indices[:20])
 
     subset_val_dataset = Subset(val_dataset, selected_indices)
 
