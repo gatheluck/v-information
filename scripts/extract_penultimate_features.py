@@ -49,7 +49,7 @@ model.to(device)
 model.eval()
 
 # extract specific target layers. 49-th layers of the ResNet50 model.
-target_key_patterns = ["^layer4.2.conv3$"]
+target_key_patterns = ["^layer4.2.act3$"]
 target_layer_keys = extract_leaf_module_keys(
     model, target_key_patterns=target_key_patterns
 )
