@@ -1,5 +1,5 @@
 import re
-from typing import Iterable
+from typing import Iterable, Literal
 
 import numpy as np
 import torch
@@ -114,7 +114,7 @@ def extract_target_layer_features(
     dataloader: DataLoader,
     device: torch.device,
     target_layer_keys: list[str],
-    use_global_average_pooling: bool = True,
+    pooling_mode: Literal["gap", "flatten", "none"] = "gap",
 ) -> dict[str, np.ndarray]:
     """Extract features from specified target layers for the entire dataset using GPU batched inference.
 
@@ -129,8 +129,8 @@ def extract_target_layer_features(
         dataloader (DataLoader): A DataLoader providing the dataset (e.g., the ImageNet dataset).
         device (torch.device): The device to run inference on.
         target_layer_keys (list[str]): A list of target layer names (keys) to extract features from.
-        use_global_average_pooling (bool, optional): Whether to apply global average pooling
-            to the output tensors. Defaults to True.
+        pooling_mode (Literal["gap", "flatten", "none"], optional): The pooling mode to apply
+            to the output tensors. Defaults to "gap".
 
     Returns:
         dict[str, np.ndarray]: A dictionary where each key is a target layer name (str) and each
@@ -152,22 +152,24 @@ def extract_target_layer_features(
 
     # Process the dataset in batches with no gradient computation.
     with torch.no_grad():
-        for i, (images, _) in enumerate(
+        for _, (images, _) in enumerate(
             tqdm(dataloader, desc="[extracting layer features]")
         ):
-            if i >= 50:
-                break
-
             images = images.to(device)
             # Obtain outputs as an OrderedDict from the feature extractor.
             batch_features = feature_extractor(images)
             for key, feature in batch_features.items():
                 # Apply global average pooling to the output tensor.
-                if use_global_average_pooling:
+                if pooling_mode == "gap":
                     reshaped_feature = torch.mean(feature, dim=(-1, -2))
                 # Flatten the output tensor to 2D (batch_size, -1) and convert to a NumPy array.
-                else:
+                elif pooling_mode == "flatten":
                     reshaped_feature = feature.view(feature.size(0), -1)
+                # Do not apply any pooling operation.
+                elif pooling_mode == "none":
+                    reshaped_feature = feature
+                else:
+                    raise ValueError(f"Invalid pooling_mode: {pooling_mode}")
 
                 features_by_layer[key].append(reshaped_feature.cpu().numpy())
 
