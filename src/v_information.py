@@ -1,5 +1,5 @@
 import re
-from typing import Iterable, Literal
+from typing import Generator, Iterable, Literal
 
 import numpy as np
 import torch
@@ -109,6 +109,166 @@ def extract_leaf_module_keys(
     return leaf_keys
 
 
+# def extract_target_layer_features(
+#     model: nn.Module,
+#     dataloader: DataLoader,
+#     device: torch.device,
+#     target_layer_keys: list[str],
+#     pooling_mode: Literal["gap", "flatten", "none"] = "gap",
+# ) -> dict[str, np.ndarray]:
+#     """Extract features from specified target layers for the entire dataset using GPU batched inference.
+
+#     This function wraps the given model with a feature extractor to obtain outputs from target leaf modules.
+#     For each batch from the dataloader, the features are flattened (all dimensions except
+#     the batch dimension are collapsed) and stored. Finally, the features are concatenated
+#     along the batch dimension for each target layer and returned as a dictionary mapping layer
+#     keys to NumPy arrays.
+
+#     Args:
+#         model (nn.Module): The PyTorch model from which features will be extracted.
+#         dataloader (DataLoader): A DataLoader providing the dataset (e.g., the ImageNet dataset).
+#         device (torch.device): The device to run inference on.
+#         target_layer_keys (list[str]): A list of target layer names (keys) to extract features from.
+#         pooling_mode (Literal["gap", "flatten", "none"], optional): The pooling mode to apply
+#             to the output tensors. Defaults to "gap".
+
+#     Returns:
+#         dict[str, np.ndarray]: A dictionary where each key is a target layer name (str) and each
+#             value is a NumPy array of shape (N, D) containing the flattened features extracted from
+#             that layer across the entire dataset.
+
+#     """
+#     # Move the model to the target device and set it to evaluation mode.
+#     model.to(device)
+#     model.eval()
+
+#     # Create a feature extractor that returns outputs from the target layers.
+#     feature_extractor = create_feature_extractor(model, return_nodes=target_layer_keys)
+
+#     # Initialize a dictionary to collect features per target layer.
+#     features_by_layer: dict[str, list[np.ndarray]] = {
+#         key: [] for key in target_layer_keys
+#     }
+
+#     # Process the dataset in batches with no gradient computation.
+#     with torch.no_grad():
+#         for i, (images, _) in enumerate(
+#             tqdm(dataloader, desc="[extracting layer features]")
+#         ):
+#             if i >= 300:
+#                 break
+
+#             images = images.to(device)
+#             # Obtain outputs as an OrderedDict from the feature extractor.
+#             batch_features = feature_extractor(images)
+#             for key, feature in batch_features.items():
+#                 # Apply global average pooling to the output tensor.
+#                 if pooling_mode == "gap":
+#                     reshaped_feature = torch.mean(feature, dim=(-1, -2))
+#                 # Flatten the output tensor to 2D (batch_size, -1) and convert to a NumPy array.
+#                 elif pooling_mode == "flatten":
+#                     reshaped_feature = feature.view(feature.size(0), -1)
+#                 # Do not apply any pooling operation.
+#                 elif pooling_mode == "none":
+#                     reshaped_feature = feature
+#                 else:
+#                     raise ValueError(f"Invalid pooling_mode: {pooling_mode}")
+
+#                 features_by_layer[key].append(reshaped_feature.cpu().numpy())
+
+#     # Concatenate batch outputs for each target layer along the batch dimension.
+#     concatenated_features: dict[str, np.ndarray] = {
+#         k: np.concatenate(v, axis=0) for k, v in features_by_layer.items()
+#     }
+
+#     return concatenated_features
+
+
+def extract_target_layer_features_yield(
+    model: nn.Module,
+    dataloader: DataLoader,
+    device: torch.device,
+    yield_every: int,
+    target_layer_keys: list[str],
+    pooling_mode: Literal["gap", "flatten", "none"] = "gap",
+) -> Generator[dict[str, np.ndarray], None, None]:
+    """Yields concatenated features at regular intervals from specified target layers.
+
+    This function extracts features from the target layers using the given model and dataloader.
+    Features are extracted in batches and stored until the number of processed batches reaches
+    'yield_every'. If 'yield_every' is set to -1, the function yields the concatenated features
+    only once after processing the entire dataset.
+
+    Args:
+        model (nn.Module): The PyTorch model from which features will be extracted.
+        dataloader (DataLoader): DataLoader providing the dataset.
+        device (torch.device): Device to run inference on.
+        yield_every (int): Number of batches after which to yield the concatenated features.
+            If set to -1, yields only once after processing all batches.
+        target_layer_keys (list[str]): List of target layer names to extract features from.
+        pooling_mode (Literal["gap", "flatten", "none"], optional): Pooling mode to apply to the output tensor.
+            "gap" applies global average pooling, "flatten" reshapes the tensor to 2D, and "none" applies no pooling.
+            Defaults to "gap".
+
+    Yields:
+        dict[str, np.ndarray]: A dictionary mapping each target layer key to a NumPy array of concatenated features.
+
+    """
+    # Move model to target device and set to evaluation mode
+    model.to(device)
+    model.eval()
+    # Create a feature extractor that returns outputs from the specified target layers.
+    feature_extractor = create_feature_extractor(model, return_nodes=target_layer_keys)
+
+    # Initialize a dictionary to accumulate features for each target layer.
+    features_by_layer: dict[str, list[np.ndarray]] = {
+        key: [] for key in target_layer_keys
+    }
+
+    with torch.no_grad():
+        pbar = tqdm(total=len(dataloader), desc="[extracting layer features]")
+        for i, (images, _) in enumerate(dataloader):
+            if i >= 100:
+                break
+
+            images = images.to(device)
+            # Extract features for the current batch
+            batch_features = feature_extractor(images)
+            for key, feature in batch_features.items():
+                # Apply pooling or flattening based on pooling_mode
+                if pooling_mode == "gap":
+                    reshaped_feature = torch.mean(feature, dim=(-1, -2))
+                elif pooling_mode == "flatten":
+                    reshaped_feature = feature.view(feature.size(0), -1)
+                elif pooling_mode == "none":
+                    reshaped_feature = feature
+                else:
+                    raise ValueError(f"Invalid pooling_mode: {pooling_mode}")
+
+                # Append the numpy array version of the feature to the corresponding list
+                features_by_layer[key].append(reshaped_feature.cpu().numpy())
+
+            # Update and reflesh the progress bar due to yield
+            pbar.update(1)
+            pbar.refresh()
+
+            # If yield_every is not -1, yield concatenated features every specified number of batches.
+            if yield_every != -1 and (i + 1) % yield_every == 0:
+                concatenated_features = {
+                    k: np.concatenate(v, axis=0) for k, v in features_by_layer.items()
+                }
+                yield concatenated_features
+                # Clear the accumulated features after yielding
+                features_by_layer = {key: [] for key in target_layer_keys}
+
+        # After processing all batches, yield any remaining features.
+        if any(features_by_layer.values()):
+            concatenated_features = {
+                k: np.concatenate(v, axis=0) for k, v in features_by_layer.items()
+            }
+            yield concatenated_features
+
+
 def extract_target_layer_features(
     model: nn.Module,
     dataloader: DataLoader,
@@ -138,47 +298,15 @@ def extract_target_layer_features(
             that layer across the entire dataset.
 
     """
-    # Move the model to the target device and set it to evaluation mode.
-    model.to(device)
-    model.eval()
-
-    # Create a feature extractor that returns outputs from the target layers.
-    feature_extractor = create_feature_extractor(model, return_nodes=target_layer_keys)
-
-    # Initialize a dictionary to collect features per target layer.
-    features_by_layer: dict[str, list[np.ndarray]] = {
-        key: [] for key in target_layer_keys
-    }
-
-    # Process the dataset in batches with no gradient computation.
-    with torch.no_grad():
-        for _, (images, _) in enumerate(
-            tqdm(dataloader, desc="[extracting layer features]")
-        ):
-            images = images.to(device)
-            # Obtain outputs as an OrderedDict from the feature extractor.
-            batch_features = feature_extractor(images)
-            for key, feature in batch_features.items():
-                # Apply global average pooling to the output tensor.
-                if pooling_mode == "gap":
-                    reshaped_feature = torch.mean(feature, dim=(-1, -2))
-                # Flatten the output tensor to 2D (batch_size, -1) and convert to a NumPy array.
-                elif pooling_mode == "flatten":
-                    reshaped_feature = feature.view(feature.size(0), -1)
-                # Do not apply any pooling operation.
-                elif pooling_mode == "none":
-                    reshaped_feature = feature
-                else:
-                    raise ValueError(f"Invalid pooling_mode: {pooling_mode}")
-
-                features_by_layer[key].append(reshaped_feature.cpu().numpy())
-
-    # Concatenate batch outputs for each target layer along the batch dimension.
-    concatenated_features: dict[str, np.ndarray] = {
-        k: np.concatenate(v, axis=0) for k, v in features_by_layer.items()
-    }
-
-    return concatenated_features
+    features_dict_generator = extract_target_layer_features_yield(
+        model=model,
+        dataloader=dataloader,
+        device=device,
+        yield_every=-1,
+        target_layer_keys=target_layer_keys,
+        pooling_mode=pooling_mode,
+    )
+    return next(features_dict_generator)
 
 
 if __name__ == "__main__":

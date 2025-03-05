@@ -9,7 +9,10 @@ from timm.data import resolve_data_config
 from timm.data.transforms_factory import create_transform
 from torch.utils.data import DataLoader
 
-from src.v_information import extract_leaf_module_keys, extract_target_layer_features
+from src.v_information import (
+    extract_leaf_module_keys,
+    extract_target_layer_features_yield,
+)
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -19,10 +22,16 @@ parser.add_argument(
     default=32,
 )
 parser.add_argument(
-    "--save-path",
+    "--yield-every",
+    "-y",
+    type=int,
+    default=100,
+)
+parser.add_argument(
+    "--save-dir-path",
     "-s",
     type=pathlib.Path,
-    default=pathlib.Path("outputs/extracted_penultimate_features.npz"),
+    default=pathlib.Path("outputs/penultimate_features"),
 )
 args = parser.parse_args()
 
@@ -55,14 +64,23 @@ target_layer_keys = extract_leaf_module_keys(
 )
 
 # extract penultimate features.
-features_dict = extract_target_layer_features(
-    model, dataloader, device, target_layer_keys, pooling_mode="none"
+features_dict_generator = extract_target_layer_features_yield(
+    model,
+    dataloader,
+    device,
+    args.yield_every,
+    target_layer_keys,
+    pooling_mode="none",
 )
 
-print(">> penultimate features:")
-for k, v in features_dict.items():
-    print(f"{k}: shape {v.shape}")
-
 # save extracted features.
-np.savez(args.save_path, **features_dict)
-print(f">> extracted layer features are saved to `{args.save_path}`.")
+args.save_dir_path.mkdir(parents=True, exist_ok=True)
+print(f">> extracted layer features will be saved under `{args.save_dir_path}`.")
+for i, partial_features_dict in enumerate(features_dict_generator):
+    save_path = (
+        args.save_dir_path
+        / f"extracted_penultimate_features_batchsize:{args.batch_size}_{i:05d}.npz"
+    )
+    np.savez(save_path, **partial_features_dict)
+
+print(">> all features are saved successfully.")
