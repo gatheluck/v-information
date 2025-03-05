@@ -153,9 +153,6 @@ def extract_target_layer_features_yield(
     with torch.no_grad():
         pbar = tqdm(total=len(dataloader), desc="[extracting layer features]")
         for i, (images, _) in enumerate(dataloader):
-            if i >= 100:
-                break
-
             images = images.to(device)
             # Extract features for the current batch
             batch_features = feature_extractor(images)
