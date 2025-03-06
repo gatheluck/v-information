@@ -14,13 +14,13 @@ This is an unofficial pytorch implementation of the experiments executed in the 
 
 ## What is this repo about?
 
-In the original paper, a method is proposed for calculating a complexity mesure for the various concepts acquired by an ML model. Specifically, the complexity of each concept is determined by evaluating the layer depth at which the processing of information related to that concept is completed in the ML model. In this repo, we provide the code to compute the final complexity mesure $K(\bm{z}, \bm{x})$.
+In the original paper, a method is proposed for calculating a complexity mesure for the various concepts acquired by an ML model. Specifically, the complexity of each concept is determined by evaluating the layer depth at which the processing of information related to that concept is completed in the ML model. In this repo, we provide the code to compute the final complexity mesure $K(\boldsymbol{z}, \boldsymbol{x})$.
 
 ## Scripts
 
 ### 1. `scripts/extract_penultimate_features.py`
 
-This code saves the feature of the penultimate layer $f_{n}(\bm{x})$ used in dictionary learning as an npz file. Following the original paper, we save the feature representations after applying ReLU.
+This code saves the feature of the penultimate layer $f_{n}(\boldsymbol{x})$ used in dictionary learning as an npz file. Following the original paper, we save the feature representations after applying ReLU.
 
 ### 2. `scripts/train_dictionary.py`
 

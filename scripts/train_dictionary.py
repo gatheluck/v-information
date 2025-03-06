@@ -16,7 +16,7 @@ parser.add_argument(
     "--batch-size",
     "-b",
     type=int,
-    default=1024,
+    default=16384,
     help="Batch size for training the dictionary. If -1, use NMF instead of MiniBatchNMF.",
 )
 parser.add_argument(
@@ -64,3 +64,7 @@ print(f"reconstruction error: {error}")
 # save extracted features.
 np.savez(args.save_path, Z=Z, D=D, error=error)
 print(f">> Z and D are saved to `{args.save_path}`.")
+
+# calculate variance of each atom and take mean.
+variances = np.var(Z, axis=1)
+print(f"mean of var_z: {np.mean(variances)}")
